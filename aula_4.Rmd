@@ -1,0 +1,269 @@
+---
+title: "Atividade_4"
+author: "Camila Priante"
+date: "2025-05-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**TESTE DA ATIVIDADE 4 COM DADOS DA ATIVIDADE 3**
+
+**Objetivo da atividade:** acessar um banco de dados aberto de biodiversidade (especificamente o GBIF), selecionar uma espécie de interesse, inspecionar os dados de ocorrência disponíveis, avaliar sua qualidade e, por fim, produzir um mapa com essas ocorrências. A atividade visa desenvolver habilidades em obtenção, verificação e visualização de dados biológicos
+
+espécie escolhida: ***Sotalia guianensis***
+
+Sobre a espécie: *Sotalia guianensis*, conhecida como boto-cinza, é um golfinho de pequeno porte que habita águas costeiras e estuarinas da América do Sul, do sul do Brasil até Honduras. Mede cerca de 2 metros, alimenta-se de peixes e crustáceos, e vive em grupos. Está ameaçado por poluição, pesca acidental e degradação do habitat (SICILIANO, 2023).
+
+![](C:\Users\CAMILA\Desktop\Cesar\aula_4\DisciplinaDados\DisciplinaDados\Mariana.png)
+
+**Referências**
+
+SICILIANO, S.; DI BENEDITTO, A. P. M. Sotalia guianensis (Guiana dolphin). In: IUCN Red List of Threatened Species, 2023. Disponível em: <https://www.iucnredlist.org/species/18135990/50371012>. Acesso em: 16 maio 2025.
+
+------------------------------------------------------------------------
+
+Iniciando as atividades no programa RStudio
+
+Trabalhando com dados da plataforma **GBIF**
+
+-   start com os códigos no ambiente de trabalho
+
+```{r 01}
+
+## chamar os pacotes 
+require(tidyverse)
+require(rgbif)
+
+## checar funcoes
+?occ_data
+
+## baixar ocorrencias / ##mudar nome da especie + nome do objeto
+fliper_gbif <- occ_data(scientificName = "Sotalia guianensis", 
+                      hasCoordinate = TRUE,
+                      hasGeospatialIssue=FALSE)
+## dimensoes
+dim(fliper_gbif) 
+
+dim(fliper_gbif$data) 
+
+## NULL
+```
+
+-   checar os campos da tabela
+
+```{r 02}
+fliper_gbif$data %>% names
+```
+
+[1] "key" [2] "scientificName" [3] "decimalLatitude" [4] "decimalLongitude" [5] "issues" [6] "datasetKey" [7] "publishingOrgKey" [8] "installationKey" [9] "hostingOrganizationKey" [10] "publishingCountry" . . .
+
+-   Consultar e entender os tipos de problemas ("issues") que podem estar presentes nos dados baixados do GBIF.
+
+```{r 03}
+# numero de ocorrencias
+
+dim(fliper_gbif$data)
+
+gbif_issues()
+
+# checar problemas reportados
+issues_gbif <- fliper_gbif$data$issues %>% 
+  unique() %>% 
+  strsplit(., "[,]") %>% 
+  unlist()
+
+gbif_issues() %>% 
+  data.frame() %>% 
+  filter(code %in% issues_gbif)
+
+## selecionando as variaveis 
+fliper_gbif1 <- fliper_gbif$data %>%
+  dplyr::select(scientificName, acceptedScientificName, decimalLatitude, decimalLongitude,
+                issues, waterBody, basisOfRecord, occurrenceStatus, rightsHolder, 
+                datasetName, recordedBy, locality, habitat) 
+
+# função distinc, se nao rodar, tem q instalar o pacote dplyr
+
+fliper_gbif1 <- fliper_gbif1 %>% 
+  distinct() 
+
+# checar niveis dos fatores
+lapply(fliper_gbif1, unique)
+
+## chamar a tabela para ver as colunas disponiveis 
+fliper_gbif1
+```
+
+-   Iniciar uma checagem manual e mais detalhada dos dados, buscando erros que não são detectados automaticamente pelo validador do GBIF
+
+```{r 04}
+
+#chamar pacotes
+library(bdc)
+library(CoordinateCleaner)  
+
+# checar coordenadas válidas
+check_pf <- 
+  bdc::bdc_coordinates_outOfRange(
+    data = fliper_gbif1,
+    lat = "decimalLatitude",
+    lon = "decimalLongitude")
+
+# chamar pacotes
+library(tidyverse)
+
+# checar coordenadas válidas e próximas a capitais (muitas vezes as coordenadas são erroneamente associadas a capitais dos países)
+
+cl <- fliper_gbif1 %>%
+  CoordinateCleaner::clean_coordinates(species = "acceptedScientificName",
+                                       lat = "decimalLatitude",
+                                       lon = "decimalLongitude",
+                                       tests = c("capitals", 
+                                                 "centroids","equal", 
+                                                 "gbif", "institutions", 
+                                                 "outliers", "seas", 
+                                                 "zeros"))
+# verificar coordenadas com flags
+
+# capitais (padrão é um raio de 10km)
+ggplot() +
+  borders("world", fill = "lightgray") +
+  geom_point(data = cl, aes(x = decimalLongitude, y = decimalLatitude, color = `.cap`)) +
+  coord_quickmap() +
+  theme_classic()
+
+
+# pontos no mar
+ggplot() +
+  borders("world", fill = "lightgray") +
+  geom_point(data = cl, aes(x = decimalLongitude, y = decimalLatitude, color = `.sea`)) +
+  coord_quickmap() +
+  theme_classic()
+
+# investigar niveis suspeitos
+fliper_gbif1 %>% 
+  distinct(waterBody) %>% 
+  pull()
+
+
+# waterBody
+fliper_gbif1 %>%
+  group_by(waterBody) %>% 
+  summarise(occ = length(scientificName)) %>% 
+  ggplot(aes(occ, y=waterBody)) +
+  geom_bar(stat = 'identity') 
+
+
+# fonte das regioes erradas
+fliper_gbif1 %>% 
+  filter(waterBody %in% c("Atlantic Ocean", "Carribean", "Royal Caribbean", "Carribean Sea", "Bonaire")) %>% 
+  distinct(datasetName)
+
+fliper_gbif1 <- fliper_gbif1 %>% 
+  filter(!waterBody %in% c("Atlantic Ocean", "Carribean", "Royal Caribbean", "Carribean Sea", "Bonaire"))
+
+# número X de ocorrencias
+fliper_gbif1 %>% 
+  filter(datasetName %in% c("Diveboard - Scuba diving citizen science")) %>% 
+  data.frame()
+
+# filtrar todas do dataset suspeito
+fliper_gbif_noDiveboard <- fliper_gbif1 %>% 
+  filter(!datasetName %in% c("Diveboard - Scuba diving citizen science"))
+
+##cortes de outliers 
+fliper_gbif_noDiveboard %>% 
+  filter(decimalLatitude > 25) %>% 
+  arrange(-decimalLatitude) %>% 
+  data.frame()
+
+fliper_gbif_ok <- fliper_gbif_noDiveboard %>% 
+  filter(decimalLatitude < 31)
+```
+
+-   vamos gerar o mapa de localização dos dados
+
+```{r 05}
+
+#chamar pacotes
+library(ggmap)
+library(maps)
+library(mapdata)
+
+world <- map_data('world')
+
+# checar pontos
+ggplot() +
+  geom_polygon(data = world, aes(x = long, y = lat, group = group)) +
+  coord_fixed() +
+  theme_classic() +
+  geom_point(data = fliper_gbif_ok, aes(x = decimalLongitude, y = decimalLatitude), color = "red") +
+  labs(x = "longitude", y = "latitude", title = expression(italic("Sotalia guianensis")))
+```
+
+-   parte do OBIS
+
+```{r 06}
+## OBIS
+
+
+library(robis)
+
+
+fliper_obis <- robis::occurrence("Sotalia guianensis") ##trocar nome da especie
+
+# checar dados
+names(fliper_obis)
+
+#colunas 
+fliper_obis1 <- fliper_obis %>% 
+  dplyr::select(scientificName, decimalLatitude, decimalLongitude, bathymetry,
+                flags, waterBody, basisOfRecord, occurrenceStatus, 
+                datasetName, recordedBy, locality, habitat) %>% 
+  distinct()
+
+# check problemas reportados (flags)
+fliper_obis1 %>% 
+  distinct(flags)
+
+# check NA em datasetName
+fliper_obis1 %>% 
+  filter(!flags %in% c("NO_DEPTH,ON_LAND", "ON_LAND", "DEPTH_EXCEEDS_BATH,ON_LAND"),
+         is.na(datasetName)) %>% 
+  distinct(waterBody)
+
+
+# checar niveis
+fliper_obis1 %>% 
+  filter(!flags %in% c("NO_DEPTH,ON_LAND", "ON_LAND", "DEPTH_EXCEEDS_BATH,ON_LAND"),
+         !is.na(datasetName),
+         !waterBody %in% c("Caribbean Sea", "atlantique")) %>% 
+  lapply(., unique)
+
+
+# aplicar filtros
+fliper_obis_ok <- fliper_obis1 %>% 
+  filter(!flags %in% c("NO_DEPTH,ON_LAND", "ON_LAND", "DEPTH_EXCEEDS_BATH,ON_LAND"),
+         !is.na(datasetName),
+         !waterBody %in% c("Caribbean Sea", "atlantique"))
+
+# plot ver o mapa 
+ggplot() +
+  geom_polygon(data = world, aes(x = long, y = lat, group = group)) +
+  coord_fixed() +
+  theme_classic() +
+  geom_point(data = fliper_obis_ok, aes(x = decimalLongitude, y = decimalLatitude, color = waterBody)) +
+  labs(x = "longitude", y = "latitude", title = expression(italic("Sotalia guianensis")))
+```
+
+
+-   salvar em modo csv (3 arquivos)
+
+```{r 08}
+write.csv("occ_GBIF-OBIS_par_hepa.csv", row.names = FALSE)
+
+```
+
